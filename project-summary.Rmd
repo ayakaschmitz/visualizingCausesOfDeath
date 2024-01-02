@@ -1,0 +1,538 @@
+---
+title: "Visualizing Causes of Death in Relation to Socioeconomic Status and Population Categories Across 69 Countries"
+author: "Alexandra Schmitz"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+view(merge)
+```
+
+# Introduction
+
+## Question of interest.
+
+Describe your question of interest. What specific question are your trying to answer?
+
+-   Do countries with higher socioeconomic status consistently show higher percentages of self harm?
+
+-   Does population growth rate have an impact on the percentage of death resulting from self harm or alcohol use disorders?
+
+-   Does density (people/km\^2) have an impact on the percentages of certain types of death that occur?
+
+## Importance
+
+It is important to analyze this data because by understanding trends in types of death and relating it to socioeconomic status, policies and standards can change to minimize preventable deaths. For example, death due to factors such as self harm and alcohol use disorder can be a result of poor mental health support in the country. Population data such as growth rate and density may also help analyze trends. This data set will only represent 69 countries, the trends can potentially be extrapolated to countries with similar socioeconomic status not represented in this data set.
+
+## Background
+
+## Variables
+
+Provide a table that includes the variables you will use in your analysis. The table should have 3 columns: `name`, `type`, and `description`. The `name` column is the name of the variable, `type` is the type of data (`numeric (continous)`, `numeric (discrete)`, `factor`, `date`, `time`, etc.), while the `description` column summarizes what the variable measures (make sure to include units!) **Your response variable should be the first row of the table**.
+
+```{r, echo = FALSE}
+mydata <- data.frame(name = c("Alcohol.Use.Disorders", 
+                              "Self.harm",
+                              "Rural population (% of total population)", 
+                              "Urban population (% of total population)",
+                              "Population growth (annual %)",
+                              "Population ages 65 and above (% of total)",
+                              "SES",
+                              "gdppc", 
+                              "yrseduc", 
+                              "Population density (people per sq. km of land area)"),
+                     type = rep("numeric (continous)", 10),
+                     descriptions = c( "Percentage of total population deaths from alcohol use disorder in 2010.",
+  "Percentage of total population deaths from self-harm in 2010.",
+  
+  "Percentage of total population residing in rural areas in 2010.", 
+  "Percentage of total population residing in urban areas in 2010.", 
+  "Annual Population Growth as a Percentage in 2010.",
+  "Percentage of total population older than 65 years old in 2010. ", 
+  "Socioeconomic status score (percentile) based on GDP per capita and educational attainment in 2010.",
+  "GDP per capita in Dollars in 2010.",
+  "Years of Education in 2010.", 
+  "People per sq. km of land area in 2010"))
+                              
+knitr::kable(mydata)
+```
+
+# Data cleaning
+
+Describe what you had to do to clean the data. E.g., importing multiple data sets, merging them together, pivoting data frames, filtering the data, converting data types, etc.
+
+Include all of your data cleaning code here BUT set the chunk option `include = FALSE`. This tells R Studio to run the code but NOT include it in the document, i.e., the code will not be visible in the rendered document. Copy and paste the same code into the Appendix but set the chunk option `eval = FALSE`. The code will be visible but won't be run by R Studio.
+
+```{r, warning = FALSE}
+library(dplyr, quietly = TRUE)
+library(tibble, quietly = TRUE)
+library(tidyr, quietly = TRUE)
+library(ggplot2, quietly = TRUE)
+library(plotly, quietly = TRUE)
+```
+
+```{r, include = FALSE}
+#read files
+deathCauses <- read.csv("cause_of_deaths.csv", header = TRUE)
+population <- read.csv("healthdata.csv", header = TRUE)
+density <- read.csv("popdensity.csv", header = TRUE)
+socioeconomic <- read.csv("GlOB.SES.csv", header = TRUE)
+
+deathCauses[] <- lapply(deathCauses, function(x) ifelse(x == "", NA, x))
+deathCauses <- deathCauses %>%
+   filter(Year == 2010) %>%
+   na.omit()
+
+population[] <- lapply(population, function(x) ifelse(x == "", NA, x))
+population <- population %>%
+  pivot_longer(cols = starts_with("X"),
+               names_to = "Year",
+               values_to = "Value") %>%
+  mutate(Year = as.numeric(sub("X", "", Year)))    %>%
+  select(-Country.Code, -Indicator.Code) %>%
+  pivot_wider(names_from = "Indicator.Name", values_from = "Value") %>% 
+  filter(Year == "2010")  %>%
+   mutate(Country.Territory = Country.Name) %>%
+  select(Country.Territory, `Population, total`, `Rural population (% of total population)`, `Urban population (% of total)`, `Population growth (annual %)`, `Population ages 65 and above (% of total)` ) %>%
+  na.omit()
+
+density[] <- lapply(density, function(x) ifelse(x == "", NA, x))
+density <- density %>%
+  pivot_longer(cols = starts_with("X"),
+               names_to = "Year",
+               values_to = "Value") %>%
+  mutate(Year = as.numeric(sub("X", "", Year)))    %>%
+  select(-Country.Code, -Indicator.Code) %>%
+  pivot_wider(names_from = "Indicator.Name", values_from = "Value") %>%
+  filter(Year == "2010") %>%
+  mutate(Country.Territory = Country.Name) %>%
+  select(Country.Territory, `Population density (people per sq. km of land area)` )  %>%
+  na.omit()
+
+socioeconomic[] <- lapply(socioeconomic, function(x) ifelse(x == "", NA, x))
+ socioeconomic <- socioeconomic %>%
+   filter(year == 2010) %>%
+   mutate(Code = wbid) %>%
+   select(Code, SES, gdppc,yrseduc) %>%
+   na.omit() 
+ 
+ 
+merge <- full_join(deathCauses, population, by = "Country.Territory")
+merge <- full_join(merge, density, by = "Country.Territory")
+merge <- full_join(merge, socioeconomic, by = "Code")
+
+merge <- merge %>%
+  select(Country.Territory, Year,`Population, total`,`Rural population (% of total population)`, `Urban population (% of total)`, `Population growth (annual %)`, `Population ages 65 and above (% of total)`, `Population density (people per sq. km of land area)`, SES, gdppc, yrseduc, Alcohol.Use.Disorders, Malaria, HIV.AIDS, Alzheimer.s.Disease.and.Other.Dementias, Self.harm) %>%
+  mutate(Alcohol.Use.Disorders = Alcohol.Use.Disorders/`Population, total`,
+         Malaria = (Malaria/`Population, total`) * 100,
+         HIV.AIDS = (HIV.AIDS/`Population, total`) * 100,
+         Alzheimer.s.Disease.and.Other.Dementias = (Alzheimer.s.Disease.and.Other.Dementias/`Population, total`) * 100,
+         Self.harm = (Self.harm/`Population, total`) * 100) %>%
+  na.omit()
+```
+
+-   DeathCauses Data:
+
+    -   Converted blanks to NA's and omited NA's
+
+    -   Filtered on year = 2010
+
+-   Population/ Density Data
+
+    -   Converted blanks to NA's and omited NA's
+
+    -   Pivotted data set to take all of the columns with different years and placed into one column named 'Year'. Took values of each year and placed into new column called `Value`.
+
+    -   Pivotted data set again this taking values from `Value` and placing into each unique indicator.name column.
+
+    -   Selected variables of interest and mutated `Country.Name` to `Country.Territory` for merging purposes.
+
+    -   Filtered on year = 2010
+
+-   Socioeconomic Status Data
+
+    -   Converted blanks to NA's and omited NA's
+
+    -   Selected variables of interest and mutated `wbid` to `Code` for merging purposes (matches deathCauses data set)
+
+    -   Filtered on year = 2010
+
+-   Merge Data
+
+    -   Full_Join between data sets on `Country.Territory` / `Code` until all 4 data sets were merged
+
+    -   Selected variables of interest from all three data sets
+
+    -   Used mutate function to convert death count numbers of each category to a percentage by dividing by population total and multiplying by 100.
+
+# Numeric summaries
+
+Provide a numeric summary (think 5- or 6-number summary) of the response. Interpret the summary, i.e., comment on whether it appears:
+
+Do the same thing for 3 specific predictor variables.
+
+## Numeric summary of `Self.harm`
+
+```{r}
+summary(merge$Self.harm)
+range <-  0.033981 - 0.002601
+IQR <- 0.013063-0.005412
+upper <- 0.013063 + (1.5*IQR)
+lower <- 0.005412 - (1.5*IQR)
+range
+IQR
+upper 
+lower
+```
+
+-   The data is positively skewed because the mean is greater than the median but only slightly.
+
+-   The range of the data is 0.03138. This is a small value because the probability that an individual would die from self harm is expected to be quite low for all countries. Therefore the range will be small as well.
+
+-   The IQR which represents the spread of the middle 50% of the data 0.008. There is not a large amount of variability in the middle 50% when relating it to the total range of the data set.
+
+-   Using the IQR method, the upper and lower fence was calculated. Because the max-value is greater than the upper fence, there are outliers in the positive direction. There are no outliers in the negative direction.
+
+-   All of the values are greater than 0, which is expected.
+
+## Numeric summary of `SES`
+
+```{r}
+summary(merge$SES)
+range <-  97.552 - 1.006
+IQR <- 85.654-25.457
+upper <- 85.654 + (1.5*IQR)
+lower <- 25.457 - (1.5*IQR)
+range
+IQR
+upper 
+lower
+```
+
+-   The data is negatively skewed because the mean is less than the median.
+
+-   The range of the data is 96.546. Because these values are percentiles of socioeconomic status (calculated based on gdppc and yrseduc), it makes sense that the range would be around 100.
+
+-   The IQR which represents the spread of the middle 50% of the data is 60.197. Given that the this range is more than half of the total range, there is a moderate amount of variability in the middle 50%.
+
+-   Using the IQR method, the upper and lower fence was calculated. Because the max-value \> upper fence, there are some outliers in the positive direction. There are no outliers in the negative direction because the min \> lower fence.
+
+-   All of the values are greater than 0, and less than 100 which is expected. Percentiles cannot be negative or above 100.
+
+## Numeric summary of `Population growth (annual %)`
+
+```{r}
+summary(merge$`Population growth (annual %)`)
+range <-  3.8786 - (-0.6583)
+IQR <- 2.2536-0.4940
+upper <- 2.2536 + (1.5*IQR)
+lower <- 0.4940 - (1.5*IQR)
+range
+IQR
+upper 
+lower
+```
+
+-   The data is positively skewed because the mean is greater than the median.
+
+-   The range of the data is 4.5369.
+
+-   The IQR which represents the spread of the middle 50% of the data is 1.76. Given that the range is \~4.5, there is a moderate amount of variability in the middle 50%.
+
+-   Using the IQR method, the upper and lower fence was calculated. Because the max-value \< upper fence, there are no outliers in the positive direction. There are also no outliers in the negative direction because the min \> lower fence.
+
+-   Some values are negative because some countries are seeing a decline in population growth.
+
+## Numeric summary of `Population density`
+
+```{r}
+summary(merge$`Population density (people per sq. km of land area)`)
+range <-  492.600 - 2.868
+IQR <- 133.069-23.023
+upper <- 133.069 + (1.5*IQR)
+lower <- 23.023 - (1.5*IQR)
+range
+IQR
+upper 
+lower
+```
+
+-   The data is positively skewed because the mean is greather than the median.
+
+-   The range of the data is 489.732 (this number is large because density will vary significantly).
+
+-   The IQR which represents the spread of the middle 50% of the data is 110. Given that the range is around 489, there is a relatively small amount of variability in the middle 50%.
+
+-   Using the IQR method, the upper and lower fence was calculated. Because the max-value \>upper fence, there are outliers in the positive direction. There are no outliers in the negative direction because the min \> lower fence.
+
+-   All values are greater than 0 as expected.
+
+# Univariate graphics
+
+Provide a univariate graphical summaries of the response and 3 predictors. Provide a brief interpretation of each graphic (unimodal, bimodal, skewness, unusual observations, etc.). I would focus on the 3 predictors that are most related to the response. A univariate graphic only includes a single variable.
+
+## Histogram of `Self.harm` Response Variable
+
+```{r}
+ggplot <-
+  ggplot(merge) +
+  geom_histogram(aes(x = Self.harm), 
+                 bins = 30, 
+                 fill = "lightblue") +
+  labs(title = "Histogram of Self.harm Response Variable", 
+       x = "Percentages")
+ggplotly(ggplot)
+```
+
+-   The histogram is multimodal and is not normal due to the positive skew. Many more data points fall on the right side of the distribution. The largest peak is around 0.0065.
+
+## Histogram of `SES`
+
+```{r}
+ggplot <-
+  ggplot(merge) +
+  geom_histogram(aes(x = SES), 
+                 bins = 30, 
+                 fill = "pink") +
+  labs(title = "Histogram of Socioeconomic Status", 
+       x = "Percentiles")
+ggplotly(ggplot)
+```
+
+-   The histogram is multimodal and is not normal due to the negative skew. More data points are fall on the left side of the distribution. The largest peak is at around 86.55.
+
+## Histogram of `Population growth (annual %)`
+
+```{r}
+ggplot <-
+  ggplot(merge) +
+  geom_histogram(aes(x = `Population growth (annual %)`), 
+                 bins = 30, 
+                 fill = "lightgreen") +
+  labs(title = "Histogram of Annual Population Growth (%) Variable", 
+       x = "Percentages")
+ggplotly(ggplot)
+```
+
+-   The histogram is multimodal and is slightly skewed in the positive direction. More data points fall on the right side of the distribution but the left side seems to have a decent amount of data points as well. The largest peak is \~1.25%.
+
+## Histogram of `Population density`
+
+```{r}
+ggplot <-
+  ggplot(merge) +
+  geom_histogram(aes(x = `Population density (people per sq. km of land area)`), 
+                 bins = 30, 
+                 fill = "mediumpurple1") +
+  labs(title = "Histogram of Population density (people per sq. km of land area)", 
+       x = "People per Km^2 of Land")
+ggplotly(ggplot)
+```
+
+-   The histogram is multimodal and is heavily skewed in the positive direction. More data points fall on the right side. The largest peak is at around 17 people/km\^2.
+
+# Bivariate graphics
+
+Provide bivariate graphical summaries of the response versus each of 3 predictors. Each of the 3 graphics will only contain two variables. Provide a brief interpretation of each graphic (are there any trends or relationships?, unusual observations?, etc.). Note: include the graphics that are the most interesting and useful so you can support your later conclusions.
+
+## Scatterplot of `Self.harm` versus `SES`
+
+```{r}
+ggplot <-
+  ggplot(merge) +
+  geom_point(aes(x = SES,
+                 y = Self.harm, 
+                 text = Country.Territory)) +
+              labs(x = "Socioeconomic Status (Percentile)", 
+                   y = "Percentage of Death due to Self.harm", 
+                   title = "SES Vs. Percentage of Death due to Self.harm in 2010 by Country")
+
+ggplotly(ggplot)
+```
+
+There does not seem to be a clear linear correlation between SES and percentage of death due to self harm. The data points are quite scattered. However on average, SES of 0-50 seems to have lower deaths than SES of 50-100.
+
+The data points that fall between SES of 50-90 do seem to have a slight correlation where the percentage of death increases with the SES percentile. However even within this range, the correlation does not follow a linear pattern. It is interesting that the percentage of death due to self harm peaks around SES of 90 and then falls again as it approaches SES of 100.
+
+## Scatterplot of `Self.Harm` versus `Population growth (annual %)`
+
+```{r}
+ggplot <-
+  ggplot(merge) +
+  geom_point(aes(x = `Population growth (annual %)`,
+                 y = Self.harm, 
+                 text = Country.Territory)) +
+              labs(x = "Population growth (annual %)", 
+                   y = "Percentage of Death due to Self Harm", 
+                   title = "Population growth (annual %) Vs. Percentage of Death due to Self Harm in 2010 by Country")
+
+ggplotly(ggplot)
+
+```
+
+There seems to be some correlation with annual population growth and death due to self harm. As annual population growth increases, the rate of self harm is decreasing. However, the data points are still quite scattered and the correlation would not be linear.
+
+## Scatterplot `Self.harm` versus `Population density`
+
+```{r}
+ggplot <-
+  ggplot(merge) +
+  geom_point(aes(x = `Population density (people per sq. km of land area)`,
+                 y = Self.harm, 
+                 text = Country.Territory)) +
+              labs(x = "Population density (people per sq. km of land area)", 
+                   y = "Percentage of Death due to Self Harm", 
+                   title = "Population Density Vs. Percentage of Death due to Self.harm in 2010 by Country")
+
+ggplotly(ggplot)
+```
+
+There doesn't seem to be a correlation between density and percentage of death due to self harm. The data points are quite scattered. Guyana seems like an outlier with a very high percentage of death due to self harm compared to other countries. Most of the data points ar clustered in the lower left corner.
+
+# Multivariate graphics
+
+Provide at least 3 multivariate graphical summaries that include the response variable, along with a brief interpretation of each graphic (are there any trends or relationships?, unusual observations?, interesting patterns, etc.). This could be something like a scatter plot of the response versus another variable that facets by a third variable (or uses colors or shapes to distinguish levels of another variable). Note: a pairwise scatterplot matrix is NOT a multivariate graphic.
+
+## Multivariate graphic 1: Analyzing Self-Harm: Faceted Boxplots by Socioeconomic Status and Population Density
+
+```{r}
+merge$SES_Category <- cut(merge$SES, breaks = quantile(merge$SES, c(0, 0.25, 0.5, 0.75, 1)), labels = c("Very Low SES", "Low SES", "Medium SES", "High SES"), include.lowest = TRUE)
+
+merge$pdcategory <- cut(merge$`Population density (people per sq. km of land area)`, breaks = quantile(merge$`Population density (people per sq. km of land area)`, c(0, 0.5, 1)), labels = c("Below Median Population Density", "Above Median Population Density"), include.lowest = TRUE)
+
+ggplot(merge, aes(x = SES_Category, y = Self.harm)) +
+  geom_boxplot() + 
+  facet_wrap(~pdcategory) +
+  labs(x = "Socioeconomic Status Level", 
+       y = "Percentage of Death by Self Harm", 
+       title = "Relationships Between Socioeconomic Status, Population Density, and Percentage of Death by Self Harm in 2010") + 
+   stat_summary(fun.y=mean, geom="point", shape=10, size=5, color="red", fill="red")
+```
+
+-   For both groups of density levels, as SES increases from Low to High, % of death due to self harm increases. But for above median population density category, the increase is more stark.
+
+-   It is interesting that countries with above median densities have a higher percentage of death by self harm for High SES when compared to below median densities.
+
+-   The spread of self harm variable varies quite a lot between the different Socioeconomic statuses. For example, medium SES in the low density category has a large spread, but low SES in the same density category has a small spread.
+
+## Multivariate graphic 2 Analyzing Self-Harm: Faceted Boxplots by Population Growth and Population Density
+
+```{r}
+merge$pgcat <- cut(merge$`Population growth (annual %)`, breaks = quantile(merge$`Population growth (annual %)`, c(0, 0.25, 0.5, 0.75, 1)), labels = c("Very Low", "Low", "Medium", "High"), include.lowest = TRUE)
+
+breaks <- quantile(merge$`Population density (people per sq. km of land area)`, c(0, 0.5, 1))
+merge$pdcategory <- cut(merge$`Population density (people per sq. km of land area)`, breaks = breaks, labels = c("Below Median Population Density", "Above Median Population Density"), include.lowest = TRUE)
+
+ggplot(merge, aes(x = pgcat, y = Self.harm)) +
+  geom_boxplot() + 
+  facet_wrap(~pdcategory) +
+  labs(x = "Population Growth Level", 
+       y = "Percentage of Death by Self Harm", 
+       title = "Relationships Between Population Growth, Population Density, and Percentage of Death by Self Harm in 2010") + 
+  stat_summary(fun.y=mean, geom="point", shape=10, size=5, color="red", fill="red")
+```
+
+-   In both density levels, mean % of death due to self harm seems to decrease with population growth.
+
+-   It is interesting that the % of death due to self harm seems significantly higher in very low population growth countries with lower density compared to higher density countries.
+
+-   The spread varies quite a lot for each population growth category, similarly to the first graph presented.
+
+## Multivariate graphic 3 Analyzing Self-Harm: Faceted Boxplots by % of Death due to Alcohol Use Disorder and Population Density
+
+```{r}
+merge$alcoholcat <- cut(merge$Alcohol.Use.Disorders, breaks = quantile(merge$Alcohol.Use.Disorders, c(0, 0.5, 1)), labels = c("Below Median % Death due to Alcohol Use", "Above Median % Death due to Alcohol Use"), include.lowest = TRUE)
+
+ggplot(merge, aes(x = pdcategory, y = Self.harm)) +
+  geom_boxplot() + 
+  facet_wrap(~alcoholcat) +
+  labs(x = "`Population density Levels`", 
+       y = "Percentage of Death by Self Harm", 
+       title = "Relationships Between Population density, Percentage of Death by Alcohol Use, and Percentage of Death by Self Harm in 2010") + 
+  stat_summary(fun.y=mean, geom="point", shape=10, size=5, color="red", fill="red")
+
+```
+
+-   Countries with above median alcohol death seem to have higher mean death by self harm compared to the below median alcohol death group.
+
+-   In countries in the below median alcohol death group, the mean self harm death increases slightly with an increase in population density. It is the opposite with the above median alcohol death group, where the mean decreases slightly with an increase in population density.
+
+-   There is a lot more spread in the self harm percentages in the above median alcohol death group compared the below median alcohol death group.
+
+# Conclusions
+
+Based on your previous analysis, what are your overall conclusions about the relationship between your response variable and your other variables? What actions or ideas should be explored in light of your findings?
+
+There seems to be a weak none-linear correlation between socioeconomic status and death % by self harm. There is a slightly stronger non-linear correlation between population growth percentage and death percentage by self harm. There is little to no correlation with density and percentage of self harm which was interesting. It was expected that perhaps the higher density countries may experience lower rates of self harm due but that was not the case.
+
+But when we explore multivariate graphs with density faceted into above and below median, there seems to be nuanced differences based on the category of socioeconomic status or population growth levels in relation to self harm percentages. It is interesting to note that a high socioeconomic status and above median density resulted in the highest mean of % death by self harm. And when looking at population growth, the low population growth group with below median density resulted in highest mean of % death by self harm. In light of these findings, it would be interesting to explore why density and socioeconomic status/population growth seem to interact to impact self harm.
+
+Lastly, there is a correlation between death by alcohol use disorder and self harm in both above and below median groups. This was expected but it may be interesting to explore if the two categories share an addiction of some sort. Perhaps people who die by self harm are experiencing addiction to other substances, making them withdraw from society and isolate.
+
+Some data was lost due to missing values, so only 69 countries out of 195 countries could be evaluated. A more careful investigation needs to be done to make sure that the data can be extrapolated. Additional predictor variables can also be added to make for a more complete analysis. For example, nutrition levels, diet, sedentary life style, and screen time may be interesting to explore in relation to the other death categories present in the original data set.
+
+# Appendix
+
+Provide the code you used to clean and analyze your data. Make sure to set `eval = FALSE` in your code chunk so the code doesn't actually run!
+
+```{r, eval = FALSE}
+#read files
+deathCauses <- read.csv("cause_of_deaths.csv", header = TRUE)
+population <- read.csv("healthdata.csv", header = TRUE)
+density <- read.csv("popdensity.csv", header = TRUE)
+socioeconomic <- read.csv("GlOB.SES.csv", header = TRUE)
+
+deathCauses[] <- lapply(deathCauses, function(x) ifelse(x == "", NA, x))
+deathCauses <- deathCauses %>%
+   filter(Year == 2010) %>%
+   na.omit()
+
+population[] <- lapply(population, function(x) ifelse(x == "", NA, x))
+population <- population %>%
+  pivot_longer(cols = starts_with("X"),
+               names_to = "Year",
+               values_to = "Value") %>%
+  mutate(Year = as.numeric(sub("X", "", Year)))    %>%
+  select(-Country.Code, -Indicator.Code) %>%
+  pivot_wider(names_from = "Indicator.Name", values_from = "Value") %>% 
+  filter(Year == "2010")  %>%
+   mutate(Country.Territory = Country.Name) %>%
+  select(Country.Territory, `Population, total`, `Rural population (% of total population)`, `Urban population (% of total)`, `Population growth (annual %)`, `Population ages 65 and above (% of total)` ) %>%
+  na.omit()
+
+density[] <- lapply(density, function(x) ifelse(x == "", NA, x))
+density <- density %>%
+  pivot_longer(cols = starts_with("X"),
+               names_to = "Year",
+               values_to = "Value") %>%
+  mutate(Year = as.numeric(sub("X", "", Year)))    %>%
+  select(-Country.Code, -Indicator.Code) %>%
+  pivot_wider(names_from = "Indicator.Name", values_from = "Value") %>%
+  filter(Year == "2010") %>%
+  mutate(Country.Territory = Country.Name) %>%
+  select(Country.Territory, `Population density (people per sq. km of land area)` )  %>%
+  na.omit()
+
+socioeconomic[] <- lapply(socioeconomic, function(x) ifelse(x == "", NA, x))
+ socioeconomic <- socioeconomic %>%
+   filter(year == 2010) %>%
+   mutate(Code = wbid) %>%
+   select(Code, SES, gdppc,yrseduc) %>%
+   na.omit() 
+ 
+ 
+merge <- full_join(deathCauses, population, by = "Country.Territory")
+merge <- full_join(merge, density, by = "Country.Territory")
+merge <- full_join(merge, socioeconomic, by = "Code")
+
+merge <- merge %>%
+  select(Country.Territory, Year,`Population, total`,`Rural population (% of total population)`, `Urban population (% of total)`, `Population growth (annual %)`, `Population ages 65 and above (% of total)`, `Population density (people per sq. km of land area)`, SES, gdppc, yrseduc, Alcohol.Use.Disorders, Malaria, HIV.AIDS, Alzheimer.s.Disease.and.Other.Dementias, Self.harm) %>%
+  mutate(Alcohol.Use.Disorders = Alcohol.Use.Disorders/`Population, total`,
+         Malaria = (Malaria/`Population, total`) * 100,
+         HIV.AIDS = (HIV.AIDS/`Population, total`) * 100,
+         Alzheimer.s.Disease.and.Other.Dementias = (Alzheimer.s.Disease.and.Other.Dementias/`Population, total`) * 100,
+         Self.harm = (Self.harm/`Population, total`) * 100) %>%
+  na.omit()
+```
